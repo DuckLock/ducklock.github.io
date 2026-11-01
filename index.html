@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>留言板</title>
+  <style>
+    /* 全局基础样式 */
+    :root {
+      --primary-color: #4f46e5; /* 主色调：靛蓝色 */
+      --primary-hover: #4338ca;
+      --bg-color: #f3f4f6;
+      --card-bg: #ffffff;
+      --text-main: #1f2937;
+      --text-muted: #6b7280;
+      --border-color: #d1d5db;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      line-height: 1.6;
+      padding: 2rem 1rem;
+      display: flex;
+      justify-content: center;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 600px;
+      background: var(--card-bg);
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 1.75rem;
+      margin-bottom: 1.5rem;
+      color: var(--text-main);
+    }
+
+    /* 表单样式 */
+    #form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 1rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+
+    button[type="submit"] {
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s, transform 0.1s;
+      align-self: flex-end;
+    }
+
+    button[type="submit"]:hover {
+      background-color: var(--primary-hover);
+    }
+
+    button[type="submit"]:active {
+      transform: scale(0.98);
+    }
+
+    button[type="submit"]:disabled {
+      background-color: var(--text-muted);
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* 留言列表样式 */
+    #list {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .comment-card {
+      background-color: #f9fafb;
+      padding: 1rem;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      animation: fadeIn 0.3s ease-in-out;
+    }
+
+    .comment-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 0.5rem;
+    }
+
+    .comment-author {
+      font-weight: 600;
+      color: var(--primary-color);
+      font-size: 1.05rem;
+    }
+
+    .comment-time {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .comment-body {
+      word-wrap: break-word;
+      white-space: pre-wrap;
+    }
+
+    /* 加载中/空状态提示 */
+    .status-text {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 2rem 0;
+    }
+
+    /* 简单的淡入动画 */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* 手机端适配 */
+    @media (max-width: 480px) {
+      .container { padding: 1.5rem; }
+      button[type="submit"] { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h1>💬 留言板</h1>
+
+    <!-- 修复：加上了 form 标签 -->
+    <form id="form">
+      <input type="text" id="author" placeholder="你的名字 (最多50字)" required maxlength="50" />
+      <textarea id="body" placeholder="写下你想说的话... (最多1000字)" required maxlength="1000"></textarea>
+      <button type="submit" id="submitBtn">发送留言</button>
+    </form>
+
+    <div id="list">
+      <div class="status-text">正在加载留言...</div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = "https://duxlo.sryze.cc"; // 确保这里是你绑定的 Worker 域名
+    const SLUG = "guestbook";
+
+    const form = document.getElementById("form");
+    const submitBtn = document.getElementById("submitBtn");
+    const listContainer = document.getElementById("list");
+
+    // 防止 XSS 攻击的转义函数
+    function esc(s) {
+      if (!s) return "";
+      return s.replace(/[&<>"']/g, (m) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;",
+        '"': "&quot;", "'": "&#39;",
+      })[m]);
+    }
+
+    // 时间格式化（把原生的 UTC 时间转成本地好看一点的时间）
+    function formatTime(timeStr) {
+      if (!timeStr) return "";
+      const date = new Date(timeStr + "Z"); // 假设后端存的是 UTC 时间
+      return date.toLocaleString('zh-CN', {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+    }
+
+    // 加载留言
+    async function load() {
+      try {
+        const res = await fetch(`${API_BASE}/api/posts/${SLUG}/comments`);
+        
+        // 检查网络状态
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        
+        const comments = await res.json();
+
+        if (comments.length === 0) {
+          listContainer.innerHTML = '<div class="status-text">还没有留言，来抢沙发吧！</div>';
+          return;
+        }
+
+        listContainer.innerHTML = comments
+          .map((c) => `
+            <div class="comment-card">
+              <div class="comment-header">
+                <span class="comment-author">${esc(c.author)}</span>
+                <span class="comment-time">${formatTime(c.created_at)}</span>
+              </div>
+              <div class="comment-body">${esc(c.body)}</div>
+            </div>
+          `)
+          .join("");
+      } catch (error) {
+        console.error("加载失败:", error);
+        listContainer.innerHTML = '<div class="status-text" style="color: #ef4444;">加载留言失败，请检查网络或 API 地址。</div>';
+      }
+    }
+
+    // 提交留言
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      
+      const author = document.getElementById("author").value.trim();
+      const body = document.getElementById("body").value.trim();
+      if (!author || !body) return;
+
+      // 按钮禁用状态，防止重复点击
+      submitBtn.disabled = true;
+      submitBtn.textContent = "发送中...";
+
+      try {
+        const res = await fetch(`${API_BASE}/api/posts/${SLUG}/comments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ author, body }),
+        });
+
+        if (!res.ok) throw new Error("提交失败");
+
+        // 清空输入框，重新加载列表
+        document.getElementById("body").value = "";
+        await load();
+      } catch (error) {
+        console.error("提交失败:", error);
+        alert("留言发送失败，请稍后再试！");
+      } finally {
+        // 恢复按钮状态
+        submitBtn.disabled = false;
+        submitBtn.textContent = "发送留言";
+      }
+    });
+
+    // 初始化页面加载
+    load();
+  </script>
+
+</body>
+</html>
